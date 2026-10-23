@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html>
+<head><title>Stream Cleaner</title></head>
+<body>
+<div id="StreamCleanerConfigPage" data-role="page" class="page type-interior pluginConfigurationPage">
+<div data-role="content">
+<div class="content-primary">
+
+    <div class="verticalSection">
+        <h2 class="sectionTitle">Settings</h2>
+        <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="TemporaryDirectory">Temporary directory</label>
+            <div style="display: flex; align-items: center;">
+                <input id="TemporaryDirectory" type="text" is="emby-input" style="flex: 1;"
+                       placeholder="Leave empty for system temp" />
+                <button is="paper-icon-button-light" id="btnBrowseTempDir"
+                        class="autoSize" title="Browse">
+                    <span class="material-icons search"></span>
+                </button>
+            </div>
+            <div class="fieldDescription">Must be writable. Empty uses the system temp directory.</div>
+        </div>
+    </div>
+
+    <div class="verticalSection">
+        <h2 class="sectionTitle">Run</h2>
+
+        <div class="inputContainer">
+            <label class="inputLabel inputLabelUnfocused" for="InputPath">Input file or directory</label>
+            <div style="display: flex; align-items: center;">
+                <input id="InputPath" type="text" is="emby-input" style="flex: 1;"
+                       placeholder="/path/to/media" />
+                <button is="paper-icon-button-light" id="btnBrowsePath"
+                        class="autoSize" title="Browse">
+                    <span class="material-icons search"></span>
+                </button>
+            </div>
+            <div class="fieldDescription">
+                Absolute server-side path. The server auto-detects file vs directory.
+            </div>
+        </div>
+
+        <h3 class="checkboxListLabel">Audio</h3>
+        <div class="checkboxContainer">
+            <label>
+                <input id="AudioByIndex" type="checkbox" is="emby-checkbox" />
+                <span>Match audio by stream index (otherwise by language name)</span>
+            </label>
+        </div>
+        <div class="inputContainer" id="AudioLanguagesRow">
+            <label class="inputLabel inputLabelUnfocused" for="AudioLanguages">Audio languages</label>
+            <input id="AudioLanguages" type="text" is="emby-input" placeholder="eng,jpn" />
+        </div>
+        <div class="inputContainer" id="AudioIndicesRow" style="display:none;">
+            <label class="inputLabel inputLabelUnfocused" for="AudioIndices">Audio stream indices</label>
+            <input id="AudioIndices" type="text" is="emby-input" placeholder="1,2" />
+        </div>
+
+        <h3 class="checkboxListLabel">Subtitles</h3>
+        <div class="checkboxContainer">
+            <label>
+                <input id="SubtitleByIndex" type="checkbox" is="emby-checkbox" />
+                <span>Match subtitles by stream index (otherwise by language name)</span>
+            </label>
+        </div>
+        <div class="inputContainer" id="SubtitleLanguagesRow">
+            <label class="inputLabel inputLabelUnfocused" for="SubtitleLanguages">Subtitle languages</label>
+            <input id="SubtitleLanguages" type="text" is="emby-input" placeholder="eng" />
+        </div>
+        <div class="inputContainer" id="SubtitleIndicesRow" style="display:none;">
+            <label class="inputLabel inputLabelUnfocused" for="SubtitleIndices">Subtitle stream indices</label>
+            <input id="SubtitleIndices" type="text" is="emby-input" placeholder="3" />
+        </div>
+
+        <div class="checkboxContainer">
+            <label>
+                <input id="IncludeVideo" type="checkbox" is="emby-checkbox" checked />
+                <span>Preserve video streams</span>
+            </label>
+        </div>
+
+        <div class="checkboxContainer">
+            <label>
+                <input id="IncludeAttachments" type="checkbox" is="emby-checkbox" />
+                <span>Preserve attachments (fonts for ASS/SSA subtitles)</span>
+            </label>
+            <div class="fieldDescription">
+                Adds <code>-map 0:t?</code> to the FFmpeg command. Ignored for files without attachments.
+            </div>
+        </div>
+
+        <div class="checkboxContainer">
+            <label>
+                <input id="RunDryRun" type="checkbox" is="emby-checkbox" checked />
+                <span>Dry run (preview only)</span>
+            </label>
+        </div>
+
+        <div class="checkboxContainer">
+            <label>
+                <input id="RunVerbose" type="checkbox" is="emby-checkbox" />
+                <span>Verbose output (show FFmpeg command)</span>
+            </label>
+        </div>
+
+        <div class="buttonContainer" style="margin-top:12px;">
+            <button is="emby-button" type="submit" id="SubmitBtn" class="raised button-submit">
+                <span>Submit</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="verticalSection">
+        <h2 class="sectionTitle">Status</h2>
+        <p id="StatusLine">No job.</p>
+        <div id="ResultList"></div>
+    </div>
+
+</div>
+</div>
+
+<!-- Directory picker overlay: matches core transcode picker exactly -->
+<div id="scPickerOverlay" style="display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,0.6);align-items:center;justify-content:center;">
+    <div class="focuscontainer dialog dialog-fixedSize dialog-small ui-body-a background-theme-a directoryPicker formDialog opened"
+         data-autofocus="true"
+         style="max-height:80vh;display:flex;flex-direction:column;">
+
+        <div class="formDialogHeader">
+            <button is="paper-icon-button-light" class="btnCloseDialog autoSize" id="scPickerClose" title="Back">
+                <span class="material-icons arrow_back" aria-hidden="true"></span>
+            </button>
+            <h3 class="formDialogHeaderTitle" id="scPickerTitle">Select Path</h3>
+        </div>
+
+        <div class="formDialogContent scrollY" style="flex:1;overflow:auto;">
+            <div class="dialogContentInner dialog-content-centered">
+                <div class="infoBanner" id="scPickerInfo" style="margin-bottom:1.5em;"></div>
+                <form id="scPickerForm" style="margin:auto;">
+                    <div class="inputContainer" style="display:flex;align-items:center;">
+                        <div style="flex-grow:1;">
+                            <label class="inputLabel inputLabelUnfocused" for="scTxtDirectoryPickerPath">Folder</label>
+                            <input is="emby-input" id="scTxtDirectoryPickerPath" type="text" label="Folder" />
+                        </div>
+                        <button type="button" is="paper-icon-button-light"
+                                class="btnRefreshDirectories emby-input-iconbutton" id="scBtnRefresh" title="Refresh">
+                            <span class="material-icons search" aria-hidden="true"></span>
+                        </button>
+                    </div>
+                    <div class="results paperList" id="scPickerResults"
+                         style="max-height:300px;overflow-y:auto;"></div>
+                    <div class="formDialogFooter">
+                        <button is="emby-button" type="submit"
+                                class="raised button-submit block formDialogFooterItem">
+                            <span>OK</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script>
+(function () {
+    var pluginId = '2feb1d37-2bc3-4828-9cf9-11c7a094820a';
+    var root = document.getElementById('StreamCleanerConfigPage');
+    if (!root) return;
+
+    function q(id) { return document.getElementById(id); }
+    function splitList(v) { return (v || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean); }
+    function parseIntList(v) { return splitList(v).map(function (s) { return parseInt(s, 10); }).filter(function (n) { return !isNaN(n); }); }
+
+    function escapeHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+    }
+    function escapeAttr(s) {
+        return escapeHtml(s).replace(/"/g, '&quot;');
+    }
+
+    function copyToClipboard(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            return navigator.clipboard.writeText(text);
+        }
+        return new Promise(function (resolve, reject) {
+            try {
+                var ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.left = '-10000px';
+                ta.style.top = '0';
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                var ok = document.execCommand('copy');
+                document.body.removeChild(ta);
+                if (ok) resolve(); else reject(new Error('execCommand copy failed'));
+            } catch (e) { reject(e); }
+        });
+    }
+
+    var statusInterval = null;
+    var saveTimer = null;
+    var probeTimer = null;
+
+    // ---------- Config (auto-save) ----------
+    function loadConfig() {
+        ApiClient.getPluginConfiguration(pluginId).then(function (cfg) {
+            q('TemporaryDirectory').value = cfg.TemporaryDirectory || '';
+        });
+    }
+    function scheduleSave() {
+        if (saveTimer) clearTimeout(saveTimer);
+        saveTimer = setTimeout(saveConfig, 400);
+    }
+    function saveConfig() {
+        ApiClient.getPluginConfiguration(pluginId).then(function (cfg) {
+            cfg.TemporaryDirectory = q('TemporaryDirectory').value || '';
+            ApiClient.updatePluginConfiguration(pluginId, cfg);
+        });
+    }
+
+    // ---------- Directory Picker ----------
+    var scPickerCallback = null;
+    var scPickerIncludeFiles = true;
+
+    function openDirectoryBrowser(callback, includeFiles, startPath) {
+        scPickerCallback = callback;
+        scPickerIncludeFiles = includeFiles !== false;
+
+        q('scPickerTitle').textContent = scPickerIncludeFiles ? 'Select Input Path' : 'Select Directory';
+        q('scPickerInfo').textContent = scPickerIncludeFiles
+            ? 'Browse or enter the path to process. Select a directory to process all media files inside it, or pick a single file.'
+            : 'Browse or enter the directory to use for temporary files. It must be writable by the Jellyfin process.';
+        q('scPickerOverlay').style.display = 'flex';
+
+        var resolveStart = startPath
+            ? Promise.resolve(startPath)
+            : ApiClient.getJSON(ApiClient.getUrl('Environment/DefaultDirectoryBrowser'))
+                .then(function (info) { return (info && info.Path) ? info.Path : '/'; })
+                .catch(function () { return '/'; });
+
+        resolveStart.then(function (path) {
+            scRefreshDirectory(path, '/');
+        });
+    }
+
+    function scClosePicker() {
+        q('scPickerOverlay').style.display = 'none';
+        scPickerCallback = null;
+    }
+
+    function scParseParentPath(response) {
+        if (!response) return '';
+        if (typeof response === 'object' && response.Path) return response.Path;
+        if (typeof response === 'string') {
+            var trimmed = response.trim();
+            if (trimmed.length >= 2 && trimmed.charAt(0) === '"' && trimmed.charAt(trimmed.length - 1) === '"') {
+                try { return JSON.parse(trimmed); } catch (e) { }
+            }
+            return trimmed;
+        }
+        return '';
+    }
+
+    function scRefreshDirectory(path, fallbackPath) {
+        if (!path) path = '/';
+        var results = q('scPickerResults');
+        results.innerHTML = '<div style="padding:12px;">Loading…</div>';
+
+        ApiClient.getJSON(ApiClient.getUrl('Environment/DirectoryContents', {
+            path: path,
+            includeDirectories: true,
+            includeFiles: scPickerIncludeFiles
+        })).then(function (folders) {
+            q('scTxtDirectoryPickerPath').value = path;
+
+            if (!path || path === '/' || path === '') {
+                scRenderDirectory(folders || [], '');
+                return;
+            }
+
+            ApiClient.getParentPath(path).then(function (parentResponse) {
+                var parentPath = scParseParentPath(parentResponse);
+                scRenderDirectory(folders || [], parentPath);
+            }).catch(function () {
+                scRenderDirectory(folders || [], '');
+            });
+        }).catch(function (err) {
+            if (fallbackPath && path !== fallbackPath) {
+                scRefreshDirectory(fallbackPath);
+                return;
+            }
+            results.innerHTML = '<div style="padding:12px;color:#f66;">Failed to load: ' +
+                ((err && err.message) || 'unknown') + '</div>';
+        });
+    }
+
+    function scRenderDirectory(folders, parentPath) {
+        var results = q('scPickerResults');
+        var html = '';
+
+        if (parentPath) {
+            html += '<div class="listItem listItem-border lnkPath lnkDirectory" data-type="Directory" data-path="' +
+                    escapeAttr(parentPath) + '">' +
+                    '<div class="listItemBody" style="padding-left:0;padding-top:.5em;padding-bottom:.5em;">' +
+                    '<div class="listItemBodyText">...</div></div>' +
+                    '<span class="material-icons arrow_forward" aria-hidden="true" style="font-size:inherit;"></span>' +
+                    '</div>';
+        }
+
+        (folders || []).forEach(function (f) {
+            var isDir = f.Type === 'Directory' || f.IsFolder === true;
+            var isFile = f.Type === 'File' || f.IsFolder === false;
+            if (isFile && !scPickerIncludeFiles) return; // directory-only mode: skip files
+            var cls = isDir ? 'lnkPath lnkDirectory' : (isFile ? 'lnkPath lnkFile' : 'lnkPath');
+            var dataType = isDir ? 'Directory' : (isFile ? 'File' : '');
+            var arrow = isDir
+                ? '<span class="material-icons arrow_forward" aria-hidden="true" style="font-size:inherit;"></span>'
+                : '';
+            html += '<div class="listItem listItem-border ' + cls + '" data-type="' + dataType + '" data-path="' +
+                    escapeAttr(f.Path) + '">' +
+                    '<div class="listItemBody" style="padding-left:0;padding-top:.5em;padding-bottom:.5em;">' +
+                    '<div class="listItemBodyText">' + escapeHtml(f.Name) + '</div></div>' +
+                    arrow +
+                    '</div>';
+        });
+
+        if (!html) {
+            html = '<div style="padding:12px;opacity:0.6;">Empty directory</div>';
+        }
+        results.innerHTML = html;
+    }
+
+    q('scPickerResults').addEventListener('click', function (e) {
+        var el = e.target;
+        while (el && el !== this && !(el.classList && el.classList.contains('lnkPath'))) {
+            el = el.parentNode;
+        }
+        if (!el || !el.classList || !el.classList.contains('lnkPath')) return;
+        var path = el.getAttribute('data-path');
+        if (!path) return;
+        if (el.classList.contains('lnkDirectory')) {
+            scRefreshDirectory(path);
+        } else {
+            if (scPickerCallback) scPickerCallback(path);
+            scClosePicker();
+        }
+    });
+
+    q('scTxtDirectoryPickerPath').addEventListener('change', function () {
+        scRefreshDirectory(this.value);
+    });
+
+    q('scBtnRefresh').addEventListener('click', function () {
+        scRefreshDirectory(q('scTxtDirectoryPickerPath').value);
+    });
+
+    q('scPickerForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        var path = q('scTxtDirectoryPickerPath').value;
+        if (path && scPickerCallback) scPickerCallback(path);
+        scClosePicker();
+    });
+
+    q('scPickerClose').addEventListener('click', scClosePicker);
+
+    // ---------- Probe (auto, debounced) ----------
+    function scheduleProbe() {
+        if (probeTimer) clearTimeout(probeTimer);
+        probeTimer = setTimeout(probePath, 800);
+    }
+
+    function probePath() {
+        var inputPath = q('InputPath').value;
+        if (!inputPath || inputPath.charAt(0) !== '/') {
+            return;
+        }
+        q('StatusLine').textContent = 'Preview — scanning…';
+        q('ResultList').innerHTML = '<p>Scanning…</p>';
+        ApiClient.ajax({
+            type: 'POST',
+            url: ApiClient.getUrl('StreamCleaner/Probe'),
+            data: JSON.stringify({ Path: inputPath }),
+            contentType: 'application/json',
+            dataType: 'json'
+        }).then(function (res) {
+            q('StatusLine').textContent = previewStatusLine(res);
+            q('ResultList').innerHTML = renderProbe(res);
+        }).catch(function (err) {
+            q('StatusLine').textContent = 'Preview failed';
+            q('ResultList').innerHTML = '<p style="color:#f66;">Scan failed: ' +
+                ((err && err.message) || 'unknown') + '</p>';
+        });
+    }
+
+    function previewStatusLine(res) {
+        if (!res) return 'Preview';
+        if (res.Error) return 'Preview — error';
+        if (res.IsDirectory) {
+            var s = 'Preview — ' + res.FileCount + ' file(s) found';
+            if (res.ProbedCount < res.FileCount) s += ', showing first ' + res.ProbedCount;
+            return s;
+        }
+        return 'Preview — file';
+    }
+
+    function renderProbe(res) {
+        if (!res) return '';
+        if (res.Error) return '<p style="color:#f66;">' + escapeHtml(res.Error) + '</p>';
+        var out = '<div style="padding:8px;">';
+        (res.Files || []).forEach(function (f) {
+            out += '<div style="margin-top:12px;padding:8px;border:1px solid #444;border-radius:4px;">';
+            out += '<div><strong>' + escapeHtml(f.Path) + '</strong></div>';
+            if (f.Error) {
+                out += '<div style="color:#f66;">' + escapeHtml(f.Error) + '</div>';
+            } else {
+                if (f.Duration) out += '<div style="font-size:0.9em;">Duration: ' + formatDuration(f.Duration) + '</div>';
+                out += '<table style="width:100%;margin-top:6px;font-size:0.9em;"><thead><tr>' +
+                       '<th align="left">#</th><th align="left">Kind</th><th align="left">Codec</th>' +
+                       '<th align="left">Language</th><th align="left">Details</th></tr></thead><tbody>';
+                (f.Streams || []).forEach(function (s) {
+                    var details = '';
+                    if (s.Channels) details += s.Channels + 'ch ';
+                    if (s.Width && s.Height) details += s.Width + 'x' + s.Height;
+                    out += '<tr><td>' + s.Index + '</td><td>' + escapeHtml(s.Kind) + '</td><td>' + escapeHtml(s.Codec || '') + '</td>' +
+                           '<td>' + escapeHtml(s.Language || '') + '</td><td>' + escapeHtml(details) + '</td></tr>';
+                });
+                out += '</tbody></table>';
+            }
+            out += '</div>';
+        });
+        out += '</div>';
+        return out;
+    }
+
+    function formatDuration(s) {
+        if (!s) return '';
+        var total = Math.round(s.TotalSeconds || 0);
+        var h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), sec = total % 60;
+        return h + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0');
+    }
+
+    // ---------- Submit ----------
+    function submitJob(e) {
+        e.preventDefault();
+        var inputPath = q('InputPath').value;
+        if (!inputPath) { Dashboard.alert('Select an input path first.'); return; }
+
+        var body = {
+            InputPath: inputPath,
+            Recursive: true,
+            DryRun: q('RunDryRun').checked,
+            Verbose: q('RunVerbose').checked,
+            Selection: {
+                AudioLanguages: q('AudioByIndex').checked ? [] : splitList(q('AudioLanguages').value),
+                AudioTrackIndices: q('AudioByIndex').checked ? parseIntList(q('AudioIndices').value) : [],
+                SubtitleLanguages: q('SubtitleByIndex').checked ? [] : splitList(q('SubtitleLanguages').value),
+                SubtitleTrackIndices: q('SubtitleByIndex').checked ? parseIntList(q('SubtitleIndices').value) : [],
+                IncludeVideo: q('IncludeVideo').checked,
+                IncludeAttachments: q('IncludeAttachments').checked
+            }
+        };
+        Dashboard.showLoadingMsg();
+        ApiClient.ajax({
+            type: 'POST',
+            url: ApiClient.getUrl('StreamCleaner/Submit'),
+            data: JSON.stringify(body),
+            contentType: 'application/json'
+        }).then(function () {
+            Dashboard.hideLoadingMsg();
+            refreshStatus();
+            startAutoRefresh();
+        }).catch(function () {
+            Dashboard.hideLoadingMsg();
+            Dashboard.alert('Submit failed.');
+        });
+        return false;
+    }
+
+    // ---------- Status ----------
+    function startAutoRefresh() {
+        if (statusInterval) return;
+        statusInterval = setInterval(refreshStatus, 2000);
+    }
+    function stopAutoRefresh() {
+        if (statusInterval) { clearInterval(statusInterval); statusInterval = null; }
+    }
+
+    function refreshStatus() {
+        ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('StreamCleaner/Status'), dataType: 'json' })
+            .then(function (s) {
+                var line = q('StatusLine');
+                var list = q('ResultList');
+                if (!line || !list) return;
+                if (!s) {
+                    line.textContent = 'No job.';
+                    list.innerHTML = '';
+                    stopAutoRefresh();
+                    return;
+                }
+                line.textContent = s.Status + ' — ' + s.ProcessedFiles + '/' + s.TotalFiles +
+                    (s.ErrorMessage ? ' (' + s.ErrorMessage + ')' : '');
+                list.innerHTML = renderResults(s);
+                if (s.Status === 'Succeeded' || s.Status === 'Failed' ||
+                    s.Status === 'Cancelled' || s.Status === 'Interrupted') {
+                    stopAutoRefresh();
+                }
+            });
+    }
+
+    function renderResults(s) {
+        var out = '';
+        (s.Results || []).forEach(function (r) {
+            out += '<div style="margin:12px 0;padding:8px;border:1px solid #444;border-radius:4px;">';
+            out += '<div><strong>' + escapeHtml(r.Path) + '</strong> — ' + escapeHtml(r.Outcome);
+            if (r.Reason) out += ' (' + escapeHtml(r.Reason) + ')';
+            out += '</div>';
+            if (r.OriginalStreamCount != null) {
+                var line = 'Streams: ' + r.KeptStreamCount + '/' + r.OriginalStreamCount + ' kept';
+                if (r.AttachmentCount != null && r.AttachmentCount > 0) {
+                    line += ' · ' + r.AttachmentCount + ' attachment(s) preserved';
+                }
+                out += '<div style="font-size:0.9em;">' + line + '</div>';
+            }
+            if (r.Command) {
+                out += '<div style="display:flex;align-items:center;gap:6px;margin-top:6px;">';
+                out += '<button is="paper-icon-button-light" class="sc-copy-cmd" data-cmd="' +
+                       escapeAttr(r.Command) + '" title="Copy command">' +
+                       '<span class="material-icons content_copy"></span></button>';
+                out += '<span style="font-size:0.85em;opacity:0.7;">Copy command</span>';
+                out += '</div>';
+                out += '<pre style="font-size:0.95em;background:rgba(0,0,0,0.15);padding:8px;border-radius:4px;' +
+                       'white-space:pre-wrap;word-break:break-all;margin:4px 0 0 0;overflow-x:auto;">' +
+                       escapeHtml(r.Command) + '</pre>';
+            }
+            if (r.Streams && r.Streams.length) {
+                out += '<table style="width:100%;margin-top:6px;font-size:0.9em;"><thead><tr>' +
+                       '<th align="left">Keep</th><th align="left">#</th><th align="left">Kind</th>' +
+                       '<th align="left">Codec</th><th align="left">Language</th></tr></thead><tbody>';
+                r.Streams.forEach(function (st) {
+                    out += '<tr><td>' + (st.Kept ? '✓' : '') + '</td><td>' + st.Index + '</td><td>' +
+                           escapeHtml(st.Kind) + '</td><td>' + escapeHtml(st.Codec || '') + '</td><td>' +
+                           escapeHtml(st.Language || '') + '</td></tr>';
+                });
+                out += '</tbody></table>';
+            }
+            out += '</div>';
+        });
+        return out;
+    }
+
+    // ---------- Copy command delegation ----------
+    q('ResultList').addEventListener('click', function (e) {
+        var btn = e.target && e.target.closest ? e.target.closest('.sc-copy-cmd') : null;
+        if (!btn) return;
+        var cmd = btn.getAttribute('data-cmd');
+        if (!cmd) return;
+        copyToClipboard(cmd).then(function () {
+            var icon = btn.querySelector('.material-icons');
+            if (icon) {
+                var prev = icon.textContent;
+                icon.textContent = 'check';
+                setTimeout(function () { icon.textContent = prev; }, 1200);
+            }
+        }).catch(function () { });
+    });
+
+    // ---------- Wire-up ----------
+    root.addEventListener('pageshow', function () {
+        loadConfig();
+        refreshStatus();
+        if (q('InputPath').value) scheduleProbe();
+    });
+    root.addEventListener('pagehide', stopAutoRefresh);
+
+    q('TemporaryDirectory').addEventListener('input', scheduleSave);
+    q('SubmitBtn').addEventListener('click', submitJob);
+    q('btnBrowsePath').addEventListener('click', function () {
+        openDirectoryBrowser(function (selectedPath) {
+            if (selectedPath) {
+                q('InputPath').value = selectedPath;
+                scheduleProbe();
+            }
+        }, true, null);
+    });
+
+    q('btnBrowseTempDir').addEventListener('click', function () {
+        openDirectoryBrowser(function (selectedPath) {
+            if (selectedPath) {
+                q('TemporaryDirectory').value = selectedPath;
+                saveConfig();
+            }
+        }, false, q('TemporaryDirectory').value || null);
+    });
+    q('InputPath').addEventListener('input', scheduleProbe);
+
+    q('AudioByIndex').addEventListener('change', function () {
+        q('AudioLanguagesRow').style.display = this.checked ? 'none' : '';
+        q('AudioIndicesRow').style.display = this.checked ? '' : 'none';
+    });
+    q('SubtitleByIndex').addEventListener('change', function () {
+        q('SubtitleLanguagesRow').style.display = this.checked ? 'none' : '';
+        q('SubtitleIndicesRow').style.display = this.checked ? '' : 'none';
+    });
+})();
+</script>
+</div>
+</body>
+</html>

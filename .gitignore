@@ -1,0 +1,23 @@
+# .NET build output
+bin/
+obj/
+*.user
+*.suo
+
+# Rider / VS
+.idea/
+.vs/
+
+# Node / TypeScript build (for later)
+node_modules/
+dist/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Tests and coverage
+TestResults/
+coveragereport*/
+release-notes.md
+code-coverage-results.*

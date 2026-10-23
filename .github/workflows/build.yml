@@ -1,0 +1,224 @@
+name: build
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - jellyfin: "10.11.11"
+            abi: "10.11.0.0"
+            ver: "0.1.0.11"
+            zipname: "stream-cleaner_jf10.11.11"
+          - jellyfin: "12.2.0"
+            abi: "12.0.0.0"
+            ver: "0.1.0.12"
+            zipname: "stream-cleaner_jf12.2.0"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build for Jellyfin ${{ matrix.jellyfin }}
+        run: |
+          dotnet publish Jellyfin.Plugin.StreamCleaner/Jellyfin.Plugin.StreamCleaner.csproj \
+            -c Release \
+            -p:JellyfinVersion=${{ matrix.jellyfin }} \
+            --no-self-contained \
+            -o out
+
+      - name: Verify publish output
+        run: |
+          ls -la out/
+          test -f out/Jellyfin.Plugin.StreamCleaner.dll || { echo "DLL missing from publish output"; exit 1; }
+
+      - name: Package
+        run: |
+          cd out
+          ABI="${{ matrix.abi }}"
+          VER="${{ matrix.ver }}"
+
+          cat > meta.json <<EOF
+          {
+            "guid": "${{ vars.PLUGIN_GUID }}",
+            "name": "Stream Cleaner",
+            "description": "Select and remux audio/subtitle tracks without re-encoding.",
+            "overview": "Stream-copy only, with verified replacement and recoverable backups.",
+            "owner": "${{ github.repository_owner }}",
+            "category": "General",
+            "targetAbi": "${ABI}",
+            "version": "${VER}",
+            "status": "Active",
+            "autoUpdate": false
+          }
+          EOF
+
+          zip -r ../${{ matrix.zipname }}.zip .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.zipname }}
+          path: ${{ matrix.zipname }}.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Test with coverage (net10.0)
+        run: |
+          dotnet test Jellyfin.Plugin.StreamCleaner.sln \
+            --configuration Release \
+            --verbosity quiet \
+            -p:JellyfinVersion=12.0.0 \
+            --results-directory "${{ github.workspace }}/TestResults" \
+            --collect:"XPlat Code Coverage"
+
+      - name: Generate coverage summary (shell)
+        if: always()
+        run: |
+          set -euo pipefail
+          XML=$(find TestResults -name 'coverage.cobertura.xml' | head -1)
+          if [ -z "$XML" ]; then
+            echo "No coverage XML found" > code-coverage-results.md
+            exit 0
+          fi
+
+          LINE_RATE=$(grep -oP 'line-rate="\K[^"]+' "$XML" | head -1)
+          BRANCH_RATE=$(grep -oP 'branch-rate="\K[^"]+' "$XML" | head -1)
+          LINE_PCT=$(awk "BEGIN {printf \"%.1f\", $LINE_RATE * 100}")
+          BRANCH_PCT=$(awk "BEGIN {printf \"%.1f\", $BRANCH_RATE * 100}")
+
+          {
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Line coverage | ${LINE_PCT}% |"
+            echo "| Branch coverage | ${BRANCH_PCT}% |"
+          } > code-coverage-results.md
+
+          cat code-coverage-results.md
+
+      - name: Build release notes from commits
+        id: notes
+        run: |
+          set -euo pipefail
+          CURRENT="${GITHUB_REF_NAME}"
+          PREV="$(git describe --tags --abbrev=0 "${CURRENT}^" 2>/dev/null || true)"
+          echo "prev=${PREV}" >> "$GITHUB_OUTPUT"
+
+          {
+            if [ -n "$PREV" ]; then
+              echo "## Commits since ${PREV}"
+            else
+              echo "## All commits"
+            fi
+            echo
+            if [ -n "$PREV" ]; then
+              git log "${PREV}..HEAD" --no-merges --pretty=format:'* %s (`%h`)'
+            else
+              git log HEAD --no-merges --pretty=format:'* %s (`%h`)'
+            fi
+            echo
+            echo
+
+            if [ -f code-coverage-results.md ]; then
+              echo "## Test coverage"
+              echo
+              cat code-coverage-results.md
+              echo
+            fi
+          } > release-notes.md
+
+          echo "----- release-notes.md -----"
+          cat release-notes.md
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List downloaded files
+        run: |
+          echo "Downloaded files:"
+          ls -la artifacts/
+
+      - name: Generate manifest.json
+        run: |
+          cd artifacts
+          MD5_JF11=$(md5sum stream-cleaner_jf10.11.11.zip | cut -d' ' -f1)
+          MD5_JF12=$(md5sum stream-cleaner_jf12.2.0.zip  | cut -d' ' -f1)
+          TAG="${GITHUB_REF#refs/tags/}"
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+          cat > manifest.json <<EOF
+          [
+            {
+              "category": "General",
+              "guid": "${PLUGIN_GUID}",
+              "name": "Stream Cleaner",
+              "description": "Select and remux audio/subtitle tracks without re-encoding.",
+              "owner": "${GITHUB_REPOSITORY_OWNER}",
+              "overview": "Stream-copy only, with verified replacement and recoverable backups.",
+              "imageUrl": "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/assets/logo.png",
+              "versions": [
+                {
+                  "version": "0.1.0.12",
+                  "targetAbi": "12.0.0.0",
+                  "sourceUrl": "${BASE}/stream-cleaner_jf12.2.0.zip",
+                  "checksum": "${MD5_JF12}",
+                  "timestamp": "${TS}",
+                  "changelog": "Compatible with: Jellyfin 12.x (net10.0 build)."
+                },
+                {
+                  "version": "0.1.0.11",
+                  "targetAbi": "10.11.0.0",
+                  "sourceUrl": "${BASE}/stream-cleaner_jf10.11.11.zip",
+                  "checksum": "${MD5_JF11}",
+                  "timestamp": "${TS}",
+                  "changelog": "Compatible with: Jellyfin 10.11.x (net9.0 build)."
+                }
+              ]
+            }
+          ]
+          EOF
+        env:
+          PLUGIN_GUID: ${{ vars.PLUGIN_GUID }}
+
+      - name: List assets to upload
+        run: |
+          ls -la artifacts/
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          overwrite_files: true
+          body_path: release-notes.md
+          previous_tag: ${{ steps.notes.outputs.prev }}
+          generate_release_notes: true
+          files: |
+            artifacts/stream-cleaner_jf10.11.11.zip
+            artifacts/stream-cleaner_jf12.2.0.zip
+            artifacts/manifest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

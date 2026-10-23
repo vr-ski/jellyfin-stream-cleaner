@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      Default target when no JellyfinVersion is supplied on the command line.
+      12.0.0 -> net10.0 (Jellyfin 12.x line).
+      Override with: dotnet publish ... -p:JellyfinVersion=10.11.11
+    -->
+    <JellyfinVersion Condition="'$(JellyfinVersion)' == ''">12.0.0</JellyfinVersion>
+
+    <!-- Jellyfin line -> .NET runtime. The host provides this runtime. -->
+    <TargetFramework Condition="$(JellyfinVersion.StartsWith('10.11'))">net9.0</TargetFramework>
+    <TargetFramework Condition="$(JellyfinVersion.StartsWith('12.'))">net10.0</TargetFramework>
+
+    <!--
+      Assembly version encodes the Jellyfin line in the 4th segment so
+      Jellyfin's installed-plugin record and the catalog entry agree.
+        Jellyfin 10.11 -> 0.1.0.11
+        Jellyfin 12.x  -> 0.1.0.12
+    -->
+    <AssemblyVersion Condition="$(JellyfinVersion.StartsWith('10.11'))">0.1.0.11</AssemblyVersion>
+    <FileVersion Condition="$(JellyfinVersion.StartsWith('10.11'))">0.1.0.11</FileVersion>
+    <AssemblyVersion Condition="$(JellyfinVersion.StartsWith('12.'))">0.1.0.12</AssemblyVersion>
+    <FileVersion Condition="$(JellyfinVersion.StartsWith('12.'))">0.1.0.12</FileVersion>
+
+    <RootNamespace>Jellyfin.Plugin.StreamCleaner</RootNamespace>
+    <AssemblyName>Jellyfin.Plugin.StreamCleaner</AssemblyName>
+
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- Required by LibraryImport (HardLink.cs). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <Version>0.1.0</Version>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <!-- Single package group. Version follows the selected Jellyfin line. -->
+  <ItemGroup>
+    <PackageReference Include="Jellyfin.Controller" Version="$(JellyfinVersion)">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    <PackageReference Include="Jellyfin.Model" Version="$(JellyfinVersion)">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Configuration/config.html" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="StreamCleaner.Tests" />
+  </ItemGroup>
+
+</Project>

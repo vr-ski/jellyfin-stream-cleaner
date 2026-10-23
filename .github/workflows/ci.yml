@@ -1,0 +1,86 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - jellyfin: "12.0.0"
+            tfm: net10.0
+          - jellyfin: "10.11.11"
+            tfm: net9.0
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build and test on Jellyfin ${{ matrix.jellyfin }} (${{ matrix.tfm }})
+        run: |
+          dotnet test Jellyfin.Plugin.StreamCleaner.sln \
+            --configuration Release \
+            --verbosity normal \
+            -p:JellyfinVersion=${{ matrix.jellyfin }} \
+            -p:TreatWarningsAsErrors=true \
+            --results-directory "${{ github.workspace }}/TestResults/${{ matrix.tfm }}" \
+            --collect:"XPlat Code Coverage"
+
+      - name: Upload raw Cobertura XML (${{ matrix.tfm }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml-${{ matrix.tfm }}
+          path: TestResults/${{ matrix.tfm }}/**/coverage.cobertura.xml
+          if-no-files-found: warn
+
+      - name: Generate HTML coverage report (${{ matrix.tfm }})
+        if: always()
+        uses: danielpalme/ReportGenerator-GitHub-Action@v5
+        with:
+          reports: 'TestResults/${{ matrix.tfm }}/**/coverage.cobertura.xml'
+          targetdir: 'coveragereport-${{ matrix.tfm }}'
+          reporttypes: 'Html'
+          title: 'Stream Cleaner coverage (${{ matrix.tfm }})'
+
+      - name: Upload HTML coverage (${{ matrix.tfm }})
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html-${{ matrix.tfm }}
+          path: coveragereport-${{ matrix.tfm }}/
+          if-no-files-found: warn
+
+      - name: Coverage summary (${{ matrix.tfm }})
+        if: always()
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: TestResults/${{ matrix.tfm }}/**/coverage.cobertura.xml
+          badge: true
+          fail_below_min: false
+          format: markdown
+          hide_branch_rate: false
+          hide_complexity: true
+          indicators: true
+          output: both
+          thresholds: '30 60'
+
+      - name: Post coverage comment to PR (${{ matrix.tfm }})
+        if: always() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: coverage-${{ matrix.tfm }}
+          recreate: true
+          path: code-coverage-results.md
